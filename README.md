@@ -27,6 +27,7 @@ The simulation is built around a professional Object-Oriented Programming (OOP) 
 
 ## Case Study 1: $N_2O_4 ⇌ 2NO_2$
 *Status: Completed*
+
 The initial implementation of this simulator focuses on the classic gas-phase equilibrium between dinitrogen tetroxide ($N_2O_4$) and nitrogen dioxide ($NO_2$). This reaction is a cornerstone of chemical education, famously used to demonstrate Le Chatelier's Principle, partly due to the distinct visual change as the colourless $N_2O_4$ gas dissociates into the brown $NO_2$ gas. This simulation provides a quantitative, dynamic exploration of the system and its behaviour under various stresses.
 
 This model operates under *ideal gas assumptions* and *isothermal conditions*. It is designed to demonstrate the fundamental mechanical aspects of equilibrium shifting.
@@ -46,6 +47,7 @@ This model operates under *ideal gas assumptions* and *isothermal conditions*. I
 
 ## Case Study 2: $N_2(g) + 3H_2(g) ⇌ 2NH_3$(g), Haber Process
 *Status: Completed (New)*
+
 This stage represents a significant leap in physical complexity. Modeling the industrial synthesis of ammonia, this simulation discards some of the approximations in the previous stage to model the messy reality of industrial chemistry.
 
 *(Link to model: [models/haber_process_model/Haber_Process_Model.ipynb](models/haber_process/Haber_Process_Model.ipynb))*
@@ -75,6 +77,33 @@ While this is a robust kinetic model, it makes certain assumptions and has some 
 3.  **Temperature independence of $\Delta H$:** the model treats the enthalpy of reaction as a constant -92 kJ/mol across all temperatures. Strictily speaking, $\Delta H$ varies with temperature.
 
 Among other assumptions listed in the Jupyter notebook. Since this project is an investigation into physical chemistry rather than engineering, industrial mechanisms such as continuous flow recycling or heat exchangers are intentionally omitted. This isolation allows for a pure visualisation of the fundamental interplay between kinetics and thermodynamics in a controlled, closed-system environment, without the confounding variables of reactor design.
+
+### Numerical Architecture and Verification
+Simulating real-time kinetics across a 300K temperature range presents significant computational challenges. This project implements specific algorithms to solve the **"stiffness problem"** inherent in Arrhenius kinetics.
+
+**The Stiffness Challenge**
+
+Reaction rates scale exponentially with temperature ($k = Ae^{-E_a/RT}$).
+*   At high temperatures, the reaction can reach equilibrium in seconds (incredibly fast).
+*   At low temperatures, the reaction could take years.
+A standard fixed-duration simulation would fail: it would either miss the equilibrium at 400K (stopping too early) or waste computational resources simulating static noise at 700K.
+
+**Solution: The Adaptive Iterative Solver**
+
+Instead of a fixed timeline, the `ChemicalSystem` class implements an **autonomous supervisor algorithm**.
+1.  The simulation runs in dynamic time "chunks."
+2.  After each chunk, the system state is analyzed.
+3.  If equilibrium is not reached, the solver preserves the state vector (`y`) and extends the time horizon geometrically.
+4.  This allows the dashboard to seamlessly handle widely different timescales without user intervention.
+
+**Equilibrium Detection**
+
+To prevent false positives during transient states (where the rate might momentarily cross zero), equilibrium is only declared when:
+1.  **Kinetic Stability:** Net Rate Magnitude $\approx 0$.
+2.  **Derivative Stability:** The slope of the rate curve $\approx 0$ (ensuring the system isn't just passing through a turning point).
+3.  **Thermodynamic Consistency:** The observed Reaction Quotient ($Q_c$) matches the theoretical $K_c$ within a strict tolerance.
+
+The physics engine has been validated against multiple test cases.
 
 ## Project Roadmap
 This is a project in progress. The $N_2O_4$ and Haber Process models serve as the foundation for a more comprehensive toolkit. Future planned enhancements include:
