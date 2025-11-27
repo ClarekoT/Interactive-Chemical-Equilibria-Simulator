@@ -43,7 +43,8 @@ This model operates under *ideal gas assumptions* and *isothermal conditions*. I
 ### Key Assumptions & Limitations for This Model
 1.  **Isothermal Conditions:** the model assumes the system is held at a constant temperature (323 K). This is a significant simplification, as the forward reaction (dissociation) is endothermic. In a real, isolated system, a shift in equilibrium would cause a temperature change, which would in turn alter the rate constants and the value of Kc.
 2.  **Ideal Gas Behavior:** the calculation of total pressure uses the Ideal Gas Law (`PV = nRT`). This approximation becomes less accurate at the higher pressures that can be generated in the simulation, where intermolecular forces and molecular volume (as accounted for in the van der Waals equation) become non-negligible.
-3.  **Perfect & Instantaneous Mixing:** the model assumes that concentrations are uniform throughout the entire volume at all times and that any injected species are mixed instantaneously. This ignores the real-world kinetics of gas diffusion and convection.
+    Another important point with this assumption is that at high pressures, such as >1000 atm, the moleucles can become packed so tightly that there is a phase change. For example, the vapour pressure of $N_2O_4$ is relatively low. Compressing it to 1350 atm would inevitably force a phase change from gas to liquid.
+4.  **Perfect & Instantaneous Mixing:** the model assumes that concentrations are uniform throughout the entire volume at all times and that any injected species are mixed instantaneously. This ignores the real-world kinetics of gas diffusion and convection.
 
 ## Case Study 2: $N_2(g) + 3H_2(g) ⇌ 2NH_3$(g), Haber Process
 *Status: Completed (New)*
