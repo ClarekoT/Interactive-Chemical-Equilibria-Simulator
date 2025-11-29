@@ -106,6 +106,13 @@ To prevent false positives during transient states (where the rate might momenta
 
 The physics engine has been validated against multiple test cases.
 
+**Stress Testing**
+
+By compressing a massive quantity of gas ($>17$ mol) into a microscopic volume ($<0.05$ dm$^3$), the simulation encounters a singularity where the container volume $V$ becomes smaller than the excluded molecular volume $nb$.
+*   **The Breakdown:** the Van der Waals equation $P = nRT/(V-nb) - \dots$ creates a mathematical singularity as $V \to nb$.
+*   **The Result:** pressure approaches infinity ($P \to \infty$). Consequently, the Reaction Quotient ($Q_p \propto P^{-2}$) approaches zero.
+*   **Significance:** this successfully identifies the physical boundary of the gas-phase model. Beyond this limit, the assumptions of the Equation of State fail, representing a regime where phase transition (solidification) would occur in reality.
+
 ## Project Roadmap
 This is a project in progress. The $N_2O_4$ and Haber Process models serve as the foundation for a more comprehensive toolkit. Future planned enhancements include:
 - **Multi-Step Reaction Mechanisms:** expanding the ODE solver to handle sequential reactions, such as the oxidation of nitric oxide.
