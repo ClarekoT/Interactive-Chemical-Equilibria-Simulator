@@ -97,7 +97,7 @@ A professional-grade diagnostic suite. Some example tests in this suite include:
 #### Advanced Visualisation Tools
 | **Main Dashboard** | **Graphing & View Controls* |
 | :---: | :---: |
-| ![User Interface](assets/user_interface.png) | ![Graph Controls](assets/graph_view_controls.png) |
+| ![System Configuration](assets/system_configuration.png)<br>![Controls](assets/controls.png) | ![Graph Controls](assets/graph_view_controls.png) |
 | *This is where the controls are. Note the dynamically generated sliders for each species and the scientific notation inputs for precise time-window selection.* | *Detailed view of the plotting logic. Includes toggles for logarithmic time/concentration axes and the "Focus Buttons" automatically generated from event analysis.* |
 | **Simulation Output: Haber Process** | **Analytical Data Table** |
 | ![Haber Process Output](assets/haber_process.png) | ![Data Table](assets/example_table.png) |
