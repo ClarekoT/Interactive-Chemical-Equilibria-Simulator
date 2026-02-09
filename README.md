@@ -111,7 +111,12 @@ A professional-grade diagnostic suite. Some example tests in this suite include:
 *   **Intelligent Y-Axis Scaling:**
     *   **Exclusion Checkboxes:** users can exclude specific species (e.g., a solvent or a bulk catalyst) from the auto-scaling logic. This prevents a high-concentration species from "flattening" the curves of the more interesting trace species.
     *   **Rate Spike Filtering:** the plotting engine automatically detects and ignores any rate spike that occurs in the very first fraction of time, ensuring the reaction rate graph remains readable.
-
+*   **Debugging Log Console:**
+In a standard Python script, `print()` is a simple way to debug. However, in an interactive environment like a Jupyter notebook with `ipywidgets`, `print()` becomes unreliable. To solve this, a logging system using Python's built-in `logging` module is implemented, which ensures all the diagnostic messages from the engine are captured and displayed reliably. This provides an isolated channel to print debug statements and diagnose issues such as numerical stability, solver warnings, loop counters, and more that would have been invisible otherwise.
+*   **Historical Run Comparison:**
+   * To enhance the analytical power of the simulation toolkit, a historical run comparison feature has been implemented. This moves beyond the limitation of only comparing a simulation to the one that was run immediately prior, allowing for a more flexible and insightful workflow.
+   * For example, you might want to compare a titration at 298 K against another at 350 K. This feature facilitates such direct visual and tabular comparisons.
+  
 #### Analytical Modules
 *   **Targeted Thermodynamic Analysis (`Target` Dropdown):**
     *   In complex multi-step mechanisms, there may be multiple reversible equilibria. This dropdown allows the user to select specific reaction pairs to visualise on the thermodynamics graph ($Q_c$ vs $K_c$), enabling the diagnosis of coupled equilibria.
@@ -149,10 +154,15 @@ A system at equilibrium subjected to a sudden volume expansion ($V \rightarrow 2
 *   **The Output:** The "Zoom" view captures the exact moment of perturbation, showing the discontinuity in concentration and the subsequent relaxation curve.
 *   ![Volume Perturbation](assets/perturbation_zoom.png)
 
+### Case D: Titration Curve
+This simulates when a strong base (e.g., $NaOH$) is constantly injected to a weak acid (e.g., $CH_3COOH$).
+*   This makes use of the `system_type` feature, and there is a function to find the equivalence point of the titration curve which works by using calculus.
+*   ![Titration Curve](assets/wa_sb_titration_curve.png)
+
 ## Limitations
 ### Current Limitations
 1. **Isothermal constraints:** the current engine assumes a thermostat maintains constant $T$. It does not consider how variables such as $\Delta H$ or $A$ change with temperature.
-2. **Phase transitions:** while phases are defined, dynamic transitions (e.g., boiling/condensation at certain prssures/temperatures) are not modeled unless explicitly defined as chemical steps (e.g., $A(l)\rightleftharpoons A(g)$).
+2. **Phase transitions:** while phases are defined, dynamic transitions (e.g., boiling/condensation at certain prssures/temperatures) are not modeled unless explicitly defined as chemical steps (e.g., $A(l)\rightleftharpoons A(g)$ ).
 3. Approximations or other complex rate laws are not supported unless written as elementary steps.
 4. **Gas behaviour:** although Van der Waals corrections are added, these are basic and do not currently account for fugacity or non-ideal mixing in high-pressure environments.
 
