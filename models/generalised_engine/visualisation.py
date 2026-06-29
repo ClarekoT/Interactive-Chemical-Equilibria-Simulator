@@ -1,16 +1,16 @@
 import numpy as np
 from typing import List, Tuple, Optional, Dict, Set
-from chemical_engine import ChemicalSystem, PerturbationSimulation
+from chemical_engine import ChemicalSystem, PerturbationSimulation, find_all_equilibrium_pairs
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from matplotlib.lines import Line2D
 from IPython.display import display
 import ipywidgets as widgets
 import pandas as pd
-from chemical_engine import find_all_equilibrium_pairs
 from validation_toolkit import analyse_acid_base
 import logging
 import copy
+from analysis import ParameterSweeper
 
 def sanitise_results(results: dict) -> dict:
     """Removes duplicate time points to prevent divide-by-zero in rate calculations."""
@@ -162,15 +162,24 @@ def align_previous_run(previous_data: dict, target_time_array: np.ndarray) -> Op
     # return a clean dictionary with only the data needed by the plotting function
     return {'time': aligned_data['time'], 'conc': conc_aligned, 'p_real': aligned_data['P_real']}
 
-def generate_table(current_data: dict, system_object: ChemicalSystem, previous_data: Optional[dict]=None, previous_data_label: Optional[str]= None, perturbation_window: Optional[Tuple[float, float]]=None) -> None:
+def generate_table(current_data: dict, system_object: ChemicalSystem, previous_data: Optional[dict]=None, previous_data_label: Optional[str]= None, perturbation_window: Optional[Tuple[float, float]]=None, fixed_t_end: Optional[float]=None) -> None:
     """Generates and displays a pandas DataFrame comparing the initial and final states."""
 
     current_data = sanitise_results(current_data)
     if previous_data: previous_data = sanitise_results(previous_data)
     
     s_names = sorted(current_data["species_data"].keys())
-    min_time_threshold = perturbation_window[1] if perturbation_window else 0.0
-    completion_time = find_completion_time(system_object, current_data, ignore_before=min_time_threshold)
+
+    if fixed_t_end:
+        display_time = fixed_t_end
+    else:
+        min_time_threshold = perturbation_window[1] if perturbation_window else 0.0
+        completion_time = find_completion_time(system_object, current_data, ignore_before=min_time_threshold)
+        display_time = max(completion_time, min_time_threshold * 1.1)
+        # fallback: if display_time is effectively 0 (instant equilibrium), show the last data point
+        if display_time < 1e-9:
+             display_time = current_data['time'][-1]
+
 
     is_aqueous = False
     if 'H3O+' in s_names or 'H+' in s_names:
@@ -185,7 +194,7 @@ def generate_table(current_data: dict, system_object: ChemicalSystem, previous_d
         metric_labels.append('P(Ideal) / atm')
 
     for name in s_names:
-        metric_labels.append(f'[{name}] init')
+        metric_labels.append(f'[{name}] initial')
         metric_labels.append(f'[{name}] final')
 
     def get_vals(data):
@@ -193,7 +202,7 @@ def generate_table(current_data: dict, system_object: ChemicalSystem, previous_d
         
         vals = [f"{d_vol[-1]:.2f}",
                 f"{data['info']['T']:.1f}",
-                f"{completion_time:.2f}"]
+                f"{display_time:.2f}"]
         
         if is_aqueous:
             # calculate final pH
@@ -554,7 +563,10 @@ def generate_plot(current_data: dict, system_object: ChemicalSystem, previous_da
     # legends
     plotted_species = [n for n in s_names if n not in species_to_hide]
     l1 = [Line2D([0], [0], color=colour_map[n], lw=2, label=n) for n in plotted_species]
-    l1.append(Line2D([0], [0], color='teal', linestyle=':', lw=2, label='Pressure'))
+    if ph_mode:
+        l1.append(Line2D([0], [0], color='navy', linestyle=':', lw=2, label='pH'))
+    else:
+        l1.append(Line2D([0], [0], color='teal', linestyle=':', lw=2, label='Pressure'))
     if previous_data:
         label = previous_data_label if previous_data_label else "Previous"
         short_label = label.split(':')[0] # e.g., "Run 1: Title" -> "Run 1"
@@ -620,6 +632,7 @@ def generate_plot(current_data: dict, system_object: ChemicalSystem, previous_da
         
         if analysis:
             # plot equivalence points (as red dots)
+            counter = 1
             for pt in analysis['eq_points']:
                 if perturbation_window:
                     ax_pressure_zoom.plot(pt['time'], pt['ph'], 'ro', markersize=5, zorder=5)
@@ -628,12 +641,14 @@ def generate_plot(current_data: dict, system_object: ChemicalSystem, previous_da
                 
                 # add text with an arrow pointing to the dot
                 ax_pressure_main.annotate(
-                    f"Equivalence Point\npH {pt['ph']:.2f}, t = {pt['time']:.2f}s", 
+                    f"Equivalence Point #{counter}\npH {pt['ph']:.2f}, t = {pt['time']:.2f}s", 
                     xy=(pt['time'], pt['ph']), 
                     xytext=(pt['time'] + (total_time*0.05), pt['ph'] - 1.0),
                     arrowprops=dict(arrowstyle='->', color='black'),
                     fontsize=9, color='darkred', bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="red", alpha=0.8)
                 )
+
+                counter += 1
 
     plt.show()
 
@@ -713,8 +728,7 @@ def create_interface(system):
     chk_log_x = widgets.Checkbox(value=False, description='Log Time')
     chk_log_y = widgets.Checkbox(value=False, description='Log Concentrations')
     if system.system_type == 'acid_base':
-        chk_eq_points = widgets.Checkbox(value=False, description='Show Equivalence Point', disabled=False)
-        chk_eq_points.observe(lambda change: refresh_plot(), names='value')
+        chk_eq_points = widgets.Checkbox(value=False, description='Show Equivalence Point(s)', disabled=False)
     
     # perturbation controls....
     style_sci = {'description_width': '100px'}
@@ -988,12 +1002,8 @@ def create_interface(system):
             else:
                 show_analysis = False
 
-            if len(gui_state.run_history) > 1:
-                previous_run_key = dd_comparison.options[-2][1] # default to last run
-                dd_comparison.value = previous_run_key
-
             generate_table(current_results, system_object=gui_state.curr, # generate table
-                           previous_data=previous_results, previous_data_label=gui_state.comparison_label, perturbation_window=perturbation_window)
+                           previous_data=previous_results, previous_data_label=gui_state.comparison_label, perturbation_window=perturbation_window, fixed_t_end=fixed_t_end)
             generate_plot(current_results, system_object=gui_state.curr, previous_data=previous_results, previous_data_label=gui_state.comparison_label, # generate plot
                             perturbation_window=perturbation_window, view_window=view_window,
                             log_x=chk_log_x.value, log_y=chk_log_y.value, show_analysis=show_analysis, title=txt_title.value, highlight_point=highlight_point,
@@ -1025,6 +1035,53 @@ def create_interface(system):
             
         # Start listening again
         thermo_dropdown.observe(on_thermo_pair_change, names='value')
+
+    def _finalise_and_update_ui(system_obj: ChemicalSystem, fixed_t_end: Optional[float] = None):
+        """Central function to handle all post-simulation UI updates."""
+        # store a deep copy of the results in the history log
+        st.run_counter += 1
+        title = txt_title.value if txt_title.value else f"Untitled Simulation"
+        #check if this was a perturbation run to add a note to the title
+        run_type_note = "(Perturbed)" if st.perturb_window else ""
+        key = f"Run {st.run_counter}: {title} {run_type_note}".strip()
+        st.run_history[key] = copy.deepcopy(system_obj.results)
+
+        if system_obj.results.get('reaction_rates'):
+            key_events = find_key_events(system_obj, system_obj.results['reaction_rates'])
+            focus_buttons = []
+            for event_name, event_time in key_events.items():
+                button = widgets.Button(description=f"{event_name} (t={event_time:.1e}s)", button_style='info')
+                def create_handler(t):
+                    def handler(b):
+                        start_view = max(0.0, t / 5.0)
+                        end_view = t * 5.0
+                        max_t = system_obj.results['time'][-1]
+                        end_view = min(end_view, max_t)
+                        view_slider.value = (start_view, end_view)
+                        refresh_plot(highlight_point=t)
+                    return handler
+                button.on_click(create_handler(event_time))
+                focus_buttons.append(button)
+            focus_button_box.children = tuple(focus_buttons)
+
+        # update the comparison dropdown with the new history
+        dropdown_options = [('None', None)] + [(k, k) for k in st.run_history.keys()]
+        dd_comparison.options = dropdown_options
+        dd_comparison.disabled = False
+        st.curr = system_obj
+        st.active_system = system_obj
+
+        # if there's more than one run, default comparison to the previous one
+        if len(st.run_history) > 1:
+            previous_run_key = dd_comparison.options[-2][1]
+            # this triggers the on_comparison_select callback, which handles the refresh
+            dd_comparison.value = previous_run_key
+        else: # if this is the first run, refresh the plot without a comparison
+            st.comparison_results = None
+            st.comparison_label = None
+            update_thermo_controls(system_obj)
+            update_controls(system_obj)
+            refresh_plot(fixed_t_end=fixed_t_end)
 
     def on_run(b):
         concentrations = {n: s.value for n, s in species_sliders.items()}
@@ -1069,48 +1126,11 @@ def create_interface(system):
 
         reaction_rates = new_sys.calculate_reaction_rates_over_time()
         new_sys.results['reaction_rates'] = reaction_rates # store for plotting
-        
-        key_events = find_key_events(new_sys, reaction_rates) # find the events
-        
-        # create a button for each event found
-        focus_buttons = []
-        for event_name, event_time in key_events.items():
-            button = widgets.Button(description=f"{event_name} (t={event_time:.1e}s)", button_style='info')
-            
-            def create_handler(t):
-                def handler(b):
-                    start_view = max(0.0, t / 5.0) 
-                    end_view = t * 5.0
-                
-                    max_t = new_sys.results['time'][-1]
-                    end_view = min(end_view, max_t)
-                    view_slider.value = (start_view, end_view) # shows context
-                    refresh_plot(highlight_point=t)
-                return handler
-                
-            button.on_click(create_handler(event_time))
-            focus_buttons.append(button)
-        
-        # update the UI with the new buttons
-        focus_button_box.children = tuple(focus_buttons)
 
-        # handling the history
-        st.run_counter += 1
-        title = txt_title.value if txt_title.value else f"Untitled Simulation"
-        key = f"Run {st.run_counter}: {title}"
-        st.run_history[key] = copy.deepcopy(new_sys.results) # use deepcopy to ensure it won't be accidentally modified by later operations
-        # update the comparison dropdown with the new history
-        dropdown_options = [('None', None)] + [(key, key) for key in st.run_history.keys()] # first item is always 'None'
-        dd_comparison.options = dropdown_options
-        dd_comparison.disabled = False
-
-        st.curr = new_sys 
-        st.active_system = new_sys
-        st.perturb_window = None
-
-        update_thermo_controls(new_sys)
-        update_controls(new_sys)
-        refresh_plot(fixed_t_end=t_end_to_pass)
+        st.perturb_window = None 
+        user_t_end = t_end_widget.value
+        t_end_to_pass = user_t_end if user_t_end is not None and user_t_end > 0 else None
+        _finalise_and_update_ui(new_sys, fixed_t_end=t_end_to_pass)
 
     def on_clear(b): st.prev = None; st.curr = None; output.clear_output()
 
@@ -1164,7 +1184,7 @@ def create_interface(system):
 
         if perturbation_sim.results is None: # safety check
             with output:
-                print("\nCRITICAL: Simulation crashed. Injection rate too high or tolerances too tight.")
+                print("\nCRITICAL: Simulation crashed.")
             return
 
         # extract the final state to create the new system object
@@ -1178,12 +1198,9 @@ def create_interface(system):
         # assign the complete, stitched results from the perturbation simulation to the new system object
         post_perturb_system.results = perturbation_sim.results
 
-        st.prev = st.curr
-        st.curr = post_perturb_system
         st.perturb_window = (t_start, t_end)
-        update_thermo_controls(st.curr)
-        update_controls(st.curr) # update all UI controls
-        refresh_plot()
+        t_end_to_pass = t_end_widget.value if t_end_widget.value is not None and t_end_widget.value > 0 else None
+        _finalise_and_update_ui(post_perturb_system, fixed_t_end=t_end_to_pass)
 
     btn_apply.on_click(on_perturb)
         
@@ -1208,6 +1225,158 @@ def create_interface(system):
     else:
         checkboxes = widgets.HBox([chk_log_x, chk_log_y], layout=widgets.Layout(gap='20px'))
 
+    # parameter sweep UI section....
+    widgets.HTML("<hr><b>Parameter Sweeper</b>")
+
+    # x-axis controls
+    dd_x_var = widgets.Dropdown(
+        options=[('Temperature (T)', 'T'), ('Volume (V)', 'V'), ('Initial Concentration', 'initial_conc')],
+        value='T', description='X Variable:', style=style, layout=layout_full
+    )
+    dd_x_species = widgets.Dropdown(
+        options=species_options, description='Target (if Conc):', style=style, layout=layout_full, disabled=True
+    )
+
+    sweep_start = widgets.FloatText(value=200.0, description='Range Start:', style=style, layout=layout_half)
+    sweep_end = widgets.FloatText(value=800.0, description='Range End:', style=style, layout=layout_half)
+    
+    x_axis_box = widgets.VBox([
+        dd_x_var, dd_x_species, 
+        widgets.HBox([sweep_start, sweep_end])
+    ])
+
+    # y-axis controls
+    y_options =[
+        ('Equilibrium Time', 'eq_time'), ('Final Concentration', 'final_conc'), 
+        ('Final Moles', 'final_moles'), ('Final Real Pressure', 'final_P_real'), 
+        ('Initial Real Pressure', 'init_P_real'), ('Final Ideal Pressure', 'final_P_ideal'),
+        ('Initial Ideal Pressure', 'init_P_ideal'), ('Initial Rate', 'init_rate'), 
+        ('Final pH', 'final_pH'), ('Kc', 'Kc'), ('Kp', 'Kp'), ('Reaction Yield', 'rxn_yield')
+    ]
+    dd_y_var = widgets.Dropdown(
+        options=y_options, value='eq_time', description='Y Variable:', style=style, layout=layout_full
+    )
+    dd_y_target = widgets.Dropdown(
+        options=[('N/A', None)], description='Target:', style=style, layout=layout_full, disabled=True
+    )
+
+    # plot modifier
+    chk_transform = widgets.Checkbox(
+        value=False, description="Transform Graph (Requires X Variable = T)", 
+        style=style, layout=layout_full
+    )
+    y_axis_box = widgets.VBox([dd_y_var, dd_y_target, chk_transform])
+
+    # action button
+    btn_run_sweep = widgets.Button(description="Run Parameter Sweep", button_style='primary', layout=layout_full)
+
+    def update_x_controls(*args):
+        """Enable species selector ONLY if sweeping initial concentration. Lock transform if not T."""
+        if dd_x_var.value == 'initial_conc':
+            dd_x_species.disabled = False
+        else:
+            dd_x_species.disabled = True
+            
+        if dd_x_var.value != 'T':
+            chk_transform.value = False
+            chk_transform.disabled = True
+        else:
+            chk_transform.disabled = False
+    
+    def update_y_controls(*args):
+        """Change the options in dd_y_target based on the selected Y variable."""
+        y_val = dd_y_var.value
+        
+        if y_val in ['final_conc', 'final_moles']:
+            dd_y_target.options = [(s, s) for s in species_options]
+            dd_y_target.disabled = False
+            
+        elif y_val == 'init_rate':
+            dd_y_target.options =[(f"R{i+1}: {r}", i) for i, r in enumerate(system.reactions)]
+            dd_y_target.disabled = False
+            
+        elif y_val in['Kc', 'Kp']:
+            eq_pairs = find_all_equilibrium_pairs(system.reactions)
+            if eq_pairs:
+                dd_y_target.options =[(f"Eq. Pair (R{p[0]+1}, R{p[1]+1})", p) for p in eq_pairs]
+                dd_y_target.disabled = False
+            else:
+                dd_y_target.options = [('No Equilibria Found', None)]
+                dd_y_target.disabled = True
+                
+        elif y_val == 'rxn_yield':
+            dd_y_target.options =[('Uses Main Yield Settings', None)]
+            dd_y_target.disabled = True
+            
+        else: # applies to eq_time, pressures, pH, etc.
+            dd_y_target.options =[('N/A', None)]
+            dd_y_target.disabled = True
+    
+    # bind observers
+    dd_x_var.observe(update_x_controls, names='value')
+    dd_y_var.observe(update_y_controls, names='value')
+    update_x_controls()
+    update_y_controls()
+
+    def on_run_sweep(b):
+        with output:
+            output.clear_output(wait=True)
+            
+            if sweep_start.value >= sweep_end.value:
+                print("Error: Sweep start must be strictly less than sweep end.")
+                return
+                
+            base_sys = st.curr if st.curr else system
+
+            y_val = dd_y_var.value
+            
+            # map the generic dd_y_target to the specific kwarg needed by ParameterSweeper
+            t_species = dd_y_target.value if y_val in['final_conc', 'final_moles'] else None
+            t_rxn_idx = dd_y_target.value if y_val == 'init_rate' else None
+            t_thermo = dd_y_target.value if y_val in ['Kc', 'Kp'] else None
+            
+            if dd_x_var.value == 'initial_conc': t_species = dd_x_species.value
+            
+            # extract yield variables from the existing yield UI widgets
+            y_prod = dd_yield_product.value if y_val == 'rxn_yield' else None
+            y_reac = dd_yield_reactant.value if y_val == 'rxn_yield' else None
+            y_ratio = txt_yield_ratio.value if y_val == 'rxn_yield' else None
+
+            applied_transform = None
+            if chk_transform.value:
+                if y_val in['Kc', 'Kp']:
+                    applied_transform = 'vant_hoff'
+                elif y_val == 'init_rate':
+                    applied_transform = 'arrhenius'
+                else:
+                    print("Note: Transform checked, but Y-variable is not thermodynamic/kinetic. Ignoring transform.")
+
+            sweeper = ParameterSweeper(
+                baseline_system=base_sys,
+                x_variable=dd_x_var.value,
+                y_variable=dd_y_var.value,
+                variable_range=(sweep_start.value, sweep_end.value),
+                target_species=t_species,
+                target_reaction_idx=t_rxn_idx,
+                target_thermo_pair=t_thermo,
+                yield_product=y_prod,
+                yield_reactant=y_reac,
+                yield_ratio=y_ratio
+            )
+            
+            results = sweeper.run_sweep()
+            generate_sweep_plot(results, transform_type=applied_transform)
+
+    btn_run_sweep.on_click(on_run_sweep)
+
+    # group everything nicely into a box
+    sweep_box = widgets.VBox([
+        widgets.HTML("<hr><b>Parameter Sweeper</b>"),
+        x_axis_box, 
+        y_axis_box, 
+        btn_run_sweep
+    ])
+
     # view controls (top)
     view_controls = widgets.VBox([widgets.HTML("<b style='font-size:14px'>Graph View</b>"),
         widgets.HBox([view_slider, btn_view_update,], layout=widgets.Layout(align_items='center', gap='10px')), comparison_box,
@@ -1230,8 +1399,58 @@ def create_interface(system):
         t_end_box,
         widgets.HTML("<i>Injection Rates (mol/s):</i>"),
         widgets.VBox(inj_rows),
-        btn_apply
-        # yield_box
+        btn_apply,
+        yield_box,
+        sweep_box
     ], layout=widgets.Layout(padding='20px', border='1px solid #ddd'))
     
     display(widgets.VBox([view_controls, output, controls, log_handler_box]))
+
+def generate_sweep_plot(sweep_results: dict, title: Optional[str] = None, transform_type: Optional[str] = None):
+    """
+    Takes the dictionary of x values, y values, and sensitivities calculated for sensitivity analysis and plots them.
+    Accepts transform_type='vant_hoff' or 'arrhenius' to linearise exponential thermodynamic relationships.
+    """
+
+    if sweep_results is None:
+        print("No sweep results provided.")
+        return
+
+    x, y, sensitivity = sweep_results['x'], sweep_results['y'], sweep_results['sensitivity']
+    valid_mask = ~np.isnan(y)
+    x_valid, y_valid, sens_valid = x[valid_mask], y[valid_mask], sensitivity[valid_mask]
+    
+    if len(x_valid) == 0:
+        print("All simulations in the sweep failed. Nothing to plot.")
+        return
+
+    x_label = sweep_results['x_label']
+    y_label = sweep_results['y_label']
+
+    # mathematical transformations - ADD THIS
+
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+
+    color1 = 'tab:blue'
+    ax1.set_xlabel(x_label, fontsize=12, fontweight='bold')
+    ax1.set_ylabel(y_label, color=color1, fontsize=12, fontweight='bold')
+    line1 = ax1.plot(x_valid, y_valid, marker='o', linestyle='-', color=color1, linewidth=2, label=y_label)
+    ax1.tick_params(axis='y', labelcolor=color1)
+    ax1.grid(True, linestyle='--', alpha=0.6)
+
+    # secondary axis (sensitivity)
+    lines = line1
+    if not transform_type:
+        ax2 = ax1.twinx()
+        color2 = 'tab:red'
+        ax2.set_ylabel(f"Sensitivity d(y)/d(x)", color=color2, fontsize=12, fontweight='bold')
+        line2 = ax2.plot(x_valid, sens_valid, marker='x', linestyle=':', color=color2, linewidth=2, label='Sensitivity')
+        ax2.tick_params(axis='y', labelcolor=color2)
+        lines += line2
+
+    labels = [l.get_label() for l in lines]
+    ax1.legend(lines, labels, loc='best', framealpha=0.9, edgecolor='black')
+
+    plt.title(title if title else f"Parameter Sweep: {y_label} vs {x_label}", fontsize=14, pad=15)
+    fig.tight_layout()
+    plt.show()

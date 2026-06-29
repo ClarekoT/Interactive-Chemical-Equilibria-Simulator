@@ -2,6 +2,7 @@ import numpy as np
 from scipy.integrate import solve_ivp
 from typing import List, Tuple, Optional, Dict, Set
 import logging
+import copy
 
 logger = logging.getLogger(__name__)
 
@@ -10,13 +11,19 @@ R_J_MOL_K = 8.314 # universal gas constant in J K^-1 mol^-1
 R_ATM_L = 0.08206 # universal gas constant in L atm K^-1 mol^-1, for pressure calculations
 
 class ChemicalSpecies:
-    """A data class representing a specific chemical entity.
+    """
+    A data class representing a specific chemical entity.
     
     Attributes:
         name (str): the unique identifier for the species (e.g., 'NO', 'H2O').
         vdw_a (float): Van der Waals 'a' constant (dm^6 atm mol^-2).
         vdw_b (float): Van der Waals 'b' constant (dm^3 mol^-1).
-        species_type (str): the type of the species. Either 'reactant' (default) or 'pool' (concentration is fixed)."""
+        species_type (str): the type of the species. Either 'reactant' (default) or 'pool' (concentration is fixed).
+        phase (str)
+        density (float)
+        molar_mass (float)
+        charge (int)
+    """
     
     def __init__(self, name, vdw_a=0.0, vdw_b=0.0, species_type: str='reactant', phase: str='gas',
                  density: float=1000.0, molar_mass: float=18.015, charge:int=0):
@@ -40,8 +47,10 @@ class ChemicalSpecies:
         return f"Species('{self.name}', phase='{self.phase}')"
 
 class Reaction:
-    """Represents a single, elementary reaction step (uni-directional).
-    To model a reversible equilibrium, instantiate two Reaction objects: one for forward, one for reverse."""
+    """
+    Represents a single, elementary reaction step (uni-directional).
+    To model a reversible equilibrium, instantiate two Reaction objects: one for forward, one for reverse.
+    """
     
     def __init__(self, reactants: Dict[str, int], products: Dict[str, int], A: float, Ea: float) -> None:
         self.reactants = reactants
@@ -78,29 +87,21 @@ class Reaction:
             if np.isscalar(conc):
                 # clamp unphysical scalar concentrations
                 if conc < 0:
-                    logger.warning(
-                        f"Negative scalar concentration for '{species_name}': {conc:.2e} M. Clamping to 0.0."
-                    )
+                    logger.warning(f"Negative scalar concentration for '{species_name}': {conc:.2e} M. Clamping to 0.0.")
                     conc = 0.0
                 elif conc > 1e10:
-                    logger.warning(
-                        f"Unphysical scalar concentration for '{species_name}': {conc:.2e} M. Clamping to 1e10."
-                    )
+                    logger.warning(f"Unphysical scalar concentration for '{species_name}': {conc:.2e} M. Clamping to 1e10.")
                     conc = 1e10
 
             else:
                 conc = np.asarray(conc)
 
                 if np.any(conc < 0):
-                    logger.warning(
-                        f"Negative array concentration detected for '{species_name}'. Clamping values to 0.0."
-                    )
+                    logger.warning(f"Negative array concentration detected for '{species_name}'. Clamping values to 0.0.")
                     conc = np.maximum(conc, 0.0)
 
                 if np.any(conc > 1e10):
-                    logger.warning(
-                        f"Unphysical array concentration detected for '{species_name}'. Clamping values to 1e10."
-                    )
+                    logger.warning(f"Unphysical array concentration detected for '{species_name}'. Clamping values to 1e10.")
                     conc = np.clip(conc, a_min=None, a_max=1e10)
 
             # multiply rate contribution
@@ -109,8 +110,11 @@ class Reaction:
         return rate
 
     def __repr__(self):
-        # return a readable string representation of the reaction by formatting reactants and products dictionaries as...
-        # ..."coefficients + species" joined with "+" and separated by "->"
+        """
+        This returns a readable string representation of the reaction by formatting reactants and products dictionaries...
+        ... "coefficients + species" joined with "+" and separated by "->".
+        """
+
         def fmt(coeffs):
             parts = []
             for species, num in coeffs.items():
@@ -146,15 +150,15 @@ def find_all_equilibrium_pairs(reactions: List[Reaction]) -> List[Tuple[int, int
 
             # the core logic: check if reactants/products are swapped
             if r1.reactants == r2.products and r1.products == r2.reactants:
-                # pair found!
+                # pair found!!!
                 equilibrium_pairs.append((i, j))
                 
                 # mark both as paired so they aren't used again
                 paired_indices.add(i)
                 paired_indices.add(j)
-                
                 # since we found the partner for reaction 'i', we can stop searching for it
                 break 
+
     return equilibrium_pairs
 
 class ChemicalSystem:
@@ -163,9 +167,10 @@ class ChemicalSystem:
     Its primary job is to compute the derivative (dn/dt) for every species by summing the contributions of all reactions in the network.
     """
     
-    def __init__(self, species_list: List[ChemicalSpecies], reaction_list: List[Reaction], initial_moles: Dict[str, float], initial_V: float, initial_T: float,
-                 method: str='Radau', rtol:float=1e-6, atol:float=1e-9,
+    def __init__(self, species_list: List[ChemicalSpecies], reaction_list: List[Reaction], initial_moles: Dict[str, float],
+                 initial_V: float, initial_T: float, method: str='Radau', rtol:float=1e-6, atol:float=1e-9,
                  overall_reaction: Optional[Reaction] = None, system_type: str='generic') -> None:
+        
         self.species_list = species_list
         self.reactions = reaction_list
         self.initial_moles = initial_moles
@@ -174,7 +179,6 @@ class ChemicalSystem:
         self.overall_reaction = overall_reaction
         self.system_type = system_type
 
-        # if a species is a solvent and has 0 initial moles, calculate them: n = V * (rho / MM)
         for s in self.species_list:
             if s.phase == 'solvent':
                 s.species_type = 'pool'
@@ -182,7 +186,7 @@ class ChemicalSystem:
                     solvent_moles = self.V * (s.density / s.molar_mass)
                     self.initial_moles[s.name] = solvent_moles
 
-        # store solver settings
+        # solver settings
         self.method = method
         self.rtol = rtol
         self.atol = atol
@@ -197,7 +201,7 @@ class ChemicalSystem:
         # the ODE solver should only solve for the non-pool, reacting species
         self.reactant_species_order = sorted(list(self.reactant_species_names))
 
-        # validation checks:
+        # validation checks
         self._validate_reactions()
         for name in initial_moles:
             if name not in self.species_names:
@@ -211,6 +215,7 @@ class ChemicalSystem:
                 
     def _validate_reactions(self) -> None:
         """Internal method to ensure reaction definitions match the species list."""
+
         for i, reaction in enumerate(self.reactions): # loop through each reaction
             for r_name in reaction.reactants: # check reactants
                 if r_name not in self.species_names:
@@ -254,31 +259,9 @@ class ChemicalSystem:
         """Converts a [Moles] numpy array to a {Species: Moles} dictionary."""
         return {s: moles_array[i] for i, s in enumerate(self.reactant_species_order)}
 
-    def _get_characteristic_timescales(self) -> list[float]:
-        """Analyses the reaction list to estimate the characteristic timescales."""
-        T0 = self.T
-        # calculate initial concentrations
-        initial_concentrations = {name: n / self.V for name, n in self.initial_moles.items()}
-        
-        timescales = []
-        for reaction in self.reactions:
-            # calculate the initial rate of this specific reaction
-            initial_rate = reaction.calculate_rate(initial_concentrations, T0)
-            if initial_rate < 1e-20:
-                timescales.append(1e12) # if the reaction is inactive at t=0, it has a very long timescale.
-                continue
-            # calculate the timescale for each reactant involved in this reaction
-            for reactant_name in reaction.reactants:
-                reactant_conc = initial_concentrations.get(reactant_name, 0.0)
-                if reactant_conc > 1e-20:
-                    timescale = reactant_conc / initial_rate # = [reactant]/rate
-                    timescales.append(timescale)
-
-        # teturn a sorted list of unique timescales (with sensible bounds)
-        return sorted(list(set(timescales + [1e-12, 1e9])))
-
     def _package_results(self, t_arr: np.ndarray, y_arr: np.ndarray, V_arr: np.ndarray, T_arr: np.ndarray) -> dict:
         """Takes raw simulation output and packages it into the standard results dictionary."""
+
         y_arr = np.maximum(y_arr, 0.0)
 
         species_data = {}
@@ -300,8 +283,7 @@ class ChemicalSystem:
         return {
             'time': t_arr, 'species_data': species_data,
             'volume': V_arr, 'temperature': T_arr, 'final_moles': final_moles_dict,
-            'info': {'V': V_arr[-1], 'T': T_arr[-1]},
-            'P_real': P_real, 'P_ideal': P_ideal}
+            'info': {'V': V_arr[-1], 'T': T_arr[-1]}, 'P_real': P_real, 'P_ideal': P_ideal}
     
     def calculate_reaction_rates_over_time(self, external_results: Optional[dict]=None) -> Dict[str, np.ndarray]:
         """Calculates the instantaneous rate of each individual reaction step over the  entire course of the simulation.
@@ -356,7 +338,7 @@ class ChemicalSystem:
             for i in range(len(self.reactant_species_order))
         }
 
-        for name in self.pool_species_names:
+        for name in self.pool_species_names: # pool species do not change
             rates_dict[name] = 0.0
 
         return rates_dict
@@ -378,6 +360,7 @@ class ChemicalSystem:
 
     def run_simulation(self, t_end: Optional[float] = None, rate_tolerance: float=1e-7, max_iterations: int=75) -> None:
         """Runs the simulation using an iterative, adaptive timescale. Stops when the maximum net rate falls below rate_tolerance."""
+
         # set up the initial state vector and parameters for the iterative loop.
         y0 = self._state_to_array(self.initial_moles)
 
@@ -397,15 +380,11 @@ class ChemicalSystem:
         current_chunk_duration = 0.1  # start with a small time window for fast initial kinetics
         equilibrium_found = False
 
-        # build one master list of time points that ensures high resolution during all critical phases of the reaction...
-        # ...to prevent the solver from skipping over fast events
-        timescales = self._get_characteristic_timescales()
-
         # solve the system in segments, checking for equilibrium after each one (the iterative "chunking" loop)
         for i in range(max_iterations):
             t_span = (time_offset, time_offset + current_chunk_duration)
             
-            chunk_solution = solve_ivp( # call solver
+            chunk_solution = solve_ivp(
                 fun=self._ode_system_adapter, t_span=t_span, y0=y0, dense_output=True,
                 method=self.method, rtol=self.rtol, atol=self.atol, max_step=current_chunk_duration / 20.0)
             
@@ -428,14 +407,14 @@ class ChemicalSystem:
                     self.equilibrium_time = time_offset
                     break  
                 else:
-                    #if rates are low but we just started, expand gently
+                    # if rates are low but we just started, expand gently
                     current_chunk_duration *= 2.0
             else:
                 # if not at equilibrium, expand the next time chunk
                 current_chunk_duration *= 10.0
 
         if not equilibrium_found:
-            print(f"Warning: Equilibrium not reached after {time_offset:.2f}s (Max Iterations).")
+            print(f"Warning! Equilibrium not reached after {time_offset:.2f}s (max iterations).")
 
         # stitch all the solution chunks together into a single, unified results object
         self._process_final_results(solutions_list)
@@ -682,46 +661,40 @@ class PerturbationSimulation:
         self.target_V = new_V if new_V is not None else self.baseline_system.V
         self.target_T = new_T if new_T is not None else self.baseline_system.T
         self.injection_rates = injection_rates if injection_rates is not None else {}
-        
+        self.species_map = {s.name: s for s in self.baseline_system.species_list}
         self.results = None
     
     def _ode_adapter_perturbation(self, t: float, y: np.ndarray) -> np.ndarray:
-        self.call_counter += 1
-
-        if self.call_counter % 100000 == 0:
-            current_V_debug = np.interp(t, [self.t_start, self.t_end], [self.baseline_system.V, self.target_V])
-            current_T_debug = np.interp(t, [self.t_start, self.t_end], [self.baseline_system.T, self.target_T])
-
-            full_moles_dict_debug = {
-                **self.baseline_system._array_to_state_dict(y), 
-                **{name: self.baseline_system.initial_moles[name] for name in self.baseline_system.pool_species_names}
-            }
-            
-            rates_dict_debug = self.baseline_system.get_net_rates(full_moles_dict_debug, current_V_debug, current_T_debug)
-            
-            logger.debug(f"Solver is looping... Time t={t:.6e}, Call #{self.call_counter}")
-            logger.debug(f"--> Rates: {rates_dict_debug}")
-
         y = np.maximum(y, 0)
         current_moles = self.baseline_system._array_to_state_dict(y)
-
-        # handling of pool species (linear injection logic)
-        pool_moles = {}
-        for name in self.baseline_system.pool_species_names:
-            n_0 = self.baseline_system.initial_moles[name]
-            # if a pool species is being injected, ramp it
-            if name in self.injection_rates:
-                dt = max(0.0, t - self.t_start) 
-                n_calculated = n_0 + self.injection_rates[name] * dt
-                n_0 = max(0.0, n_calculated)
-            pool_moles[name] = n_0
-
-        full_moles_dict = {**current_moles, **pool_moles}
 
         # changing the environment (volume and temperature)
         # np.interp handles the ramp, if target == baseline, it stays constant
         current_V = np.interp(t, [self.t_start, self.t_end], [self.baseline_system.V, self.target_V])
         current_T = np.interp(t, [self.t_start, self.t_end], [self.baseline_system.T, self.target_T])
+
+        # handling of pool species (linear injection logic)
+        pool_moles = {}
+        pool_species_list = [s for s in self.baseline_system.species_list if s.species_type == 'pool']
+        for species_obj in pool_species_list:
+            name = species_obj.name
+            # calculate the target concentration from the initial state
+            initial_n = self.baseline_system.initial_moles[name]
+            initial_V = self.baseline_system.V
+            target_concentration = initial_n / initial_V if initial_V > 0 else 0.0
+            
+            # the base number of moles is dependent on the current volume (to keep concentration constant)
+            n_from_volume = target_concentration * current_V
+            n_from_injection = 0.0 # add any moles from an ongoing injection
+            if name in self.injection_rates:
+                # injection amount is based on time elapsed since perturbation start
+                dt = max(0.0, t - self.t_start)
+                n_from_injection = self.injection_rates[name] * dt
+            
+            # total moles for the pool species is the sum of both effects
+            pool_moles[name] = n_from_volume + n_from_injection
+
+        full_moles_dict = {**current_moles, **pool_moles}
         
         # calculate base rates
         dndt_dict = self.baseline_system.get_net_rates(full_moles_dict, current_V, current_T)
@@ -783,13 +756,23 @@ class PerturbationSimulation:
         s2_data = {s: s2_y[i] for i, s in enumerate(self.baseline_system.reactant_species_order)}
         
         # reconstruct pool species history for stage 2
-        for name in self.baseline_system.pool_species_names:
-            initial_n = self.baseline_system.initial_moles[name]
+        s2_vol_arr = np.interp(s2_time, [self.t_start, self.t_end], [self.baseline_system.V, self.target_V])
+        pool_species_list = [s for s in self.baseline_system.species_list if s.species_type == 'pool']
+        for species_obj in pool_species_list:
+            name = species_obj.name
+            # calculate the target concentration from the initial state
+            initial_n = self.baseline_system.initial_moles.get(name, 0.0)
+            initial_V = self.baseline_system.V
+            target_concentration = initial_n / initial_V if initial_V > 0 else 0.0
+            n_from_volume = target_concentration * s2_vol_arr
+            
+            # calculate the array of moles added from any ongoing injection
+            n_from_injection = 0.0
             if name in self.injection_rates:
-                ramp = initial_n + self.injection_rates[name] * (s2_time - self.t_start)
-                s2_data[name] = np.maximum(ramp, 0.0)
-            else:
-                s2_data[name] = np.full_like(s2_time, initial_n)
+                dt_arr = np.maximum(0.0, s2_time - self.t_start)
+                n_from_injection = self.injection_rates[name] * dt_arr
+            
+            s2_data[name] = n_from_volume + n_from_injection # sum the two effects
         
         # third stage: relaxation
         logger.info("Starting Stage 3.")
